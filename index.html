@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Cedar Point Coaster Ticker</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: rgba(0, 0, 0, 0.4);
+            color: #ffffff;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            overflow: hidden;
+            width: 100vw;
+            height: 80px;
+            display: flex;
+            align-items: center;
+            transition: background-color 0.5s ease;
+        }
+
+        #ticker-container {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            overflow: hidden;
+            white-space: nowrap;
+            position: relative;
+            height: 100%;
+        }
+
+        #widget-title {
+            font-size: 13px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-right: 2px solid #00a8ff;
+            background: rgba(20, 20, 20, 0.95);
+            padding: 0 15px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-shrink: 0;
+            z-index: 10;
+            box-shadow: 5px 0 10px rgba(0,0,0,0.5);
+            height: 100%;
+            transition: border-right-color 0.5s ease;
+        }
+
+        .info-module {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .brand-main {
+            font-size: 17px;
+            font-weight: 800;
+            letter-spacing: 1.5px;
+            color: #00a8ff;
+            text-transform: uppercase;
+        }
+
+        .brand-sub {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            color: #ffffff;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+
+        .info-label {
+            font-size: 11px;
+            color: #888888;
+            text-transform: uppercase;
+            margin-bottom: 3px;
+        }
+
+        .info-value {
+            font-size: 15px;
+            color: #2ecc71;
+            transition: color 0.5s ease;
+        }
+
+        /* Scroll track — two wrappers so we can swap content without resetting the animation */
+        #scroll-track {
+            display: flex;
+            align-items: center;
+            height: 100%;
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .ride-strip {
+            display: flex;
+            gap: 15px;
+            padding-left: 20px;
+            animation: ticker-scroll var(--scroll-duration, 60s) linear infinite;
+            will-change: transform;
+        }
+
+        .ride-row {
+            display: flex;
+            align-items: center;
+            background: rgba(20, 20, 20, 0.85);
+            padding: 8px 18px;
+            border-radius: 5px;
+            border-left: 5px solid #00a8ff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+            height: 54px;
+            flex-shrink: 0;
+            transition: border-left-color 0.4s ease, opacity 0.4s ease;
+        }
+
+        .ride-name {
+            font-size: 18px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .ride-time {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 17px;
+            font-weight: bold;
+            color: #2ecc71;
+            background: rgba(0,0,0,0.4);
+            padding: 3px 0;
+            border-radius: 4px;
+            text-align: center;
+            width: 68px;
+            margin-left: 14px;
+            flex-shrink: 0;
+            transition: color 0.4s ease;
+        }
+
+        .ride-row.closed {
+            border-left-color: #e74c3c;
+            opacity: 0.6;
+        }
+
+        .ride-row.closed .ride-time {
+            color: #e74c3c;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 12px;
+        }
+
+        /* Wait-time heat colors */
+        .wait-warm  { color: #f39c12 !important; }
+        .wait-hot   { color: #e74c3c !important; }
+
+        /* Park-closed state */
+        body.park-closed #widget-title { border-right-color: #555555; }
+        body.park-closed .info-value   { color: #e74c3c; }
+        body.park-closed .ride-strip   { filter: grayscale(100%); }
+        body.park-closed .ride-row     { border-left-color: #7f8c8d; background: rgba(40,40,40,0.5); }
+        body.park-closed .ride-time    { color: #aaaaaa !important; }
+
+        /* Status dot on the sync label */
+        #status-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #2ecc71;
+            margin-right: 4px;
+            vertical-align: middle;
+            transition: background 0.5s ease;
+        }
+        #status-dot.stale  { background: #f39c12; }
+        #status-dot.error  { background: #e74c3c; }
+
+        @keyframes ticker-scroll {
+            0%   { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="ticker-container">
+
+    <div id="widget-title">
+        <div class="info-module">
+            <span class="brand-main">Cedar Point</span>
+            <span class="brand-sub">Wait Times</span>
+        </div>
+        <div class="info-module">
+            <span class="info-label"><span id="status-dot"></span>Sync</span>
+            <span class="info-value" id="sync-label">Loading…</span>
+        </div>
+    </div>
+
+    <div id="scroll-track">
+        <!-- .ride-strip injected by JS -->
+    </div>
+
+</div>
+
+<script>
+
+  // ─── CONFIG ──────────────────────────────────────────────────────────────────
+
+// ThemeParks.wiki Cedar Point entity ID — no proxy needed, API has open CORS
+const DATA_URL      = 'https://api.themeparks.wiki/v1/entity/c8299e1a-0098-4677-8ead-dd0da204f8dc/live';
+const FETCH_TIMEOUT = 8000;
+const POLL_INTERVAL = 45000;
+const STALE_THRESH  = 3;
+const PARK_TZ       = 'America/New_York';
+const OPEN_H        = 10;
+const CLOSE_H_WD    = 20;
+const CLOSE_H_WE    = 22;
+
+// Coaster names as they appear in the ThemeParks.wiki API
+const VALID_COASTERS = new Set([
+    "Blue Streak", "Cedar Creek Mine Ride", "Corkscrew", "GateKeeper",
+    "Gemini", "Iron Dragon", "Magnum XL-200", "Maverick",
+    "Millennium Force", "Raptor", "Rougarou", "Siren's Curse",
+    "Steel Vengeance", "Top Thrill 2", "Valravn", "Wild Mouse"
+]);
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+
+let cachedRides      = null;
+let consecutiveFails = 0;
+
+// ─── PARK SCHEDULE (Eastern Time) ────────────────────────────────────────────
+
+function nowInET() {
+    // Build a Date whose getHours()/getDay() reflect Eastern Time.
+    const etStr = new Date().toLocaleString('en-US', { timeZone: PARK_TZ });
+    return new Date(etStr);
+}
+
+function parkClosedNow() {
+    const now  = nowInET();
+    const h    = now.getHours();
+    const mins = now.getMinutes();
+    const day  = now.getDay(); // 0=Sun … 6=Sat
+    const closeH = (day === 5 || day === 6) ? CLOSE_H_WE : CLOSE_H_WD;
+    const totalMins = h * 60 + mins;
+    return totalMins < OPEN_H * 60 || totalMins >= closeH * 60;
+}
+
+// ─── DATA FETCH ───────────────────────────────────────────────────────────────
+
+/**
+ * Fetch Cedar Point live data directly from ThemeParks.wiki.
+ * This API has open CORS headers — no proxy needed.
+ * Response shape: { liveData: [{ name, status, queue: { STANDBY: { waitTime } } }] }
+ */
+async function fetchCoasterData() {
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+
+    try {
+        const res = await fetch(DATA_URL, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            signal: ctrl.signal
+        });
+        clearTimeout(tid);
+
+        if (!res.ok) return null;
+
+        const data = await res.json();
+        const entries = data.liveData;
+        if (!Array.isArray(entries) || !entries.length) return null;
+
+        const coasters = entries
+            .filter(r => r && r.name && VALID_COASTERS.has(r.name))
+            .map(r => {
+                const wait = r.queue?.STANDBY?.waitTime ?? 0;
+                const open = r.status === 'OPERATING';
+                return { name: r.name, is_open: open, wait_time: wait };
+            })
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        return coasters.length ? coasters : null;
+
+    } catch {
+        clearTimeout(tid);
+        return null;
+    }
+}
+
+// ─── RENDER ───────────────────────────────────────────────────────────────────
+
+/**
+ * Build one complete strip (the list is doubled in CSS via -50% translate).
+ * We inject a fresh strip and let CSS animation restart — but we preserve the
+ * animation progress by measuring how far through the cycle we currently are,
+ * then offsetting the new strip's animation-delay accordingly.
+ *
+ * This avoids the jarring jump-to-start that innerHTML-reset causes.
+ */
+let stripAnimStartTime = null;
+let stripDuration      = 0;
+
+function buildStrip(rides, isClosed) {
+    const strip = document.createElement('div');
+    strip.className = 'ride-strip';
+
+    // Build each ride card twice (the second copy enables the seamless loop)
+    const doubled = [...rides, ...rides];
+    doubled.forEach(ride => {
+        const row = document.createElement('div');
+        row.className = 'ride-row';
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'ride-name';
+        nameEl.textContent = ride.name;
+
+        const timeEl = document.createElement('span');
+        timeEl.className = 'ride-time';
+
+        if (isClosed || !ride.is_open) {
+            row.classList.add('closed');
+            timeEl.textContent = isClosed ? 'Closed' : 'Down';
+            timeEl.style.fontFamily = "'Segoe UI', Arial, sans-serif";
+            timeEl.style.fontSize   = '12px';
+        } else {
+            timeEl.textContent = `${ride.wait_time}m`;
+            if (ride.wait_time > 90)      timeEl.classList.add('wait-hot');
+            else if (ride.wait_time > 60) timeEl.classList.add('wait-warm');
+        }
+
+        row.appendChild(nameEl);
+        row.appendChild(timeEl);
+        strip.appendChild(row);
+    });
+
+    return strip;
+}
+
+/**
+ * Swap in a new strip. If one already exists we read its current animation
+ * progress and apply a negative delay to the new strip so the scroll position
+ * is preserved (no jump).
+ */
+function renderStrip(rides, isClosed) {
+    const track    = document.getElementById('scroll-track');
+    const existing = track.querySelector('.ride-strip');
+
+    // Compute pixel-width of one half (= one real set of rides) so we can
+    // pick a scroll speed that feels consistent regardless of ride count.
+    // We'll set this after inserting; for now calculate duration.
+    // Target: one full cycle in ~(n * 3.5) seconds, minimum 30s.
+    const SECS_PER_CARD = 3.5;
+    const newDuration   = Math.max(30, rides.length * SECS_PER_CARD);
+
+    let delayS = 0;
+    if (existing && stripAnimStartTime) {
+        const elapsed = (performance.now() - stripAnimStartTime) / 1000;
+        // How far through the current cycle are we (0..1)?
+        const progress = (elapsed % stripDuration) / stripDuration;
+        // Apply as a negative delay so the new strip starts at the same visual point.
+        delayS = -(progress * newDuration);
+    }
+
+    const newStrip = buildStrip(rides, isClosed);
+    newStrip.style.setProperty('--scroll-duration', `${newDuration}s`);
+    newStrip.style.animationDuration = `${newDuration}s`;
+    newStrip.style.animationDelay    = `${delayS}s`;
+
+    if (existing) track.removeChild(existing);
+    track.appendChild(newStrip);
+
+    stripAnimStartTime = performance.now() + (delayS * 1000); // adjust for delay
+    stripDuration      = newDuration;
+}
+
+// ─── STATUS BAR ──────────────────────────────────────────────────────────────
+
+function setStatus(label, dotClass) {
+    const dot   = document.getElementById('status-dot');
+    const sync  = document.getElementById('sync-label');
+    dot.className   = dotClass || '';
+    sync.textContent = label;
+}
+
+// ─── MAIN POLL LOOP ──────────────────────────────────────────────────────────
+
+async function tick() {
+    if (parkClosedNow()) {
+        document.body.classList.add('park-closed');
+        setStatus('Offline', 'error');
+
+        const closedRide = { name: '⬛ PARK CLOSED — Live Telemetry Resumes at 10:00 AM ET', is_open: false, wait_time: 0 };
+        renderStrip([closedRide, closedRide, closedRide], true);
+        return;
+    }
+
+    document.body.classList.remove('park-closed');
+
+    const rides = await fetchCoasterData();
+
+    if (rides) {
+        consecutiveFails = 0;
+        cachedRides      = rides;
+
+        const now = nowInET();
+        setStatus(now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }), '');
+        renderStrip(rides, false);
+
+    } else {
+        consecutiveFails++;
+
+        if (cachedRides) {
+            // Show stale data rather than nothing — mark the dot amber
+            const dotClass = consecutiveFails >= STALE_THRESH ? 'stale' : '';
+            setStatus('Cached', dotClass);
+            renderStrip(cachedRides, false);
+            console.warn(`Fetch failed (attempt ${consecutiveFails}). Serving cached data.`);
+        } else {
+            // Nothing at all yet — show simulation so the overlay isn't empty
+            setStatus('Demo', 'stale');
+            renderStrip(SIMULATION_DATA, false);
+            console.warn('No live or cached data. Showing demo data.');
+        }
+    }
+}
+
+// ─── SIMULATION FALLBACK ─────────────────────────────────────────────────────
+// Only shown when live data has *never* been retrieved (e.g. first load fails).
+
+const SIMULATION_DATA = [
+    { name: "Blue Streak",            is_open: true, wait_time: 15  },
+    { name: "Cedar Creek Mine Ride",  is_open: true, wait_time: 10  },
+    { name: "Corkscrew",              is_open: true, wait_time: 15  },
+    { name: "GateKeeper",             is_open: true, wait_time: 45  },
+    { name: "Gemini",                 is_open: true, wait_time: 20  },
+    { name: "Iron Dragon",            is_open: true, wait_time: 25  },
+    { name: "Magnum XL-200",          is_open: true, wait_time: 35  },
+    { name: "Maverick",               is_open: true, wait_time: 85  },
+    { name: "Millennium Force",       is_open: true, wait_time: 70  },
+    { name: "Raptor",                 is_open: true, wait_time: 40  },
+    { name: "Rougarou",               is_open: true, wait_time: 20  },
+    { name: "Siren's Curse",          is_open: true, wait_time: 60  },
+    { name: "Steel Vengeance",        is_open: true, wait_time: 110 },
+    { name: "Top Thrill 2",           is_open: true, wait_time: 75  },
+    { name: "Valravn",                is_open: true, wait_time: 50  },
+    { name: "Wild Mouse",             is_open: true, wait_time: 30  },
+].sort((a, b) => a.name.localeCompare(b.name));
+
+// ─── BOOT ─────────────────────────────────────────────────────────────────────
+
+tick();
+setInterval(tick, POLL_INTERVAL);
+</script>
+</body>
+</html>

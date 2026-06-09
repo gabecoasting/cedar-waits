@@ -200,8 +200,7 @@
 <script>
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-// ThemeParks.wiki Cedar Point entity ID — no proxy needed, API has open CORS
-const DATA_URL      = 'https://api.themeparks.wiki/v1/entity/c8299e1a-0098-4677-8ead-dd0da204f8dc/live';
+const DATA_URL      = 'https://queue-times.com/parks/50/queue_times.json';
 const FETCH_TIMEOUT = 8000;
 const POLL_INTERVAL = 45000;
 const STALE_THRESH  = 3;
@@ -243,62 +242,55 @@ function parkClosedNow() {
 // ─── DATA FETCH ───────────────────────────────────────────────────────────────
 
 /**
- * Fetch Cedar Point live data directly from ThemeParks.wiki.
- * This API has open CORS headers — no proxy needed.
- * Response shape: { liveData: [{ name, status, queue: { STANDBY: { waitTime } } }] }
+ * Try fetching via a list of CORS proxies in order.
+ * queue-times.com works fine through corsproxy.io from a real https:// origin.
  */
 async function fetchCoasterData() {
-    const ctrl = new AbortController();
-    const tid  = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+    const proxies = [
+        url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+        url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+        url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    ];
 
-    try {
-        const res = await fetch(DATA_URL, {
-            method: 'GET',
-            headers: { 'Content-Type': 'application/json' },
-            signal: ctrl.signal
-        });
-        clearTimeout(tid);
+    const rawUrl = `${DATA_URL}?_t=${Date.now()}`;
 
-        if (!res.ok) return null;
+    for (const proxy of proxies) {
+        const ctrl = new AbortController();
+        const tid  = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+        try {
+            const res = await fetch(proxy(rawUrl), { signal: ctrl.signal });
+            clearTimeout(tid);
+            if (!res.ok) continue;
 
-        const data = await res.json();
-        const entries = data.liveData;
-        if (!Array.isArray(entries) || !entries.length) return null;
+            let data = await res.json();
+            // allorigins wraps response in { contents: "..." }
+            if (data.contents) {
+                data = typeof data.contents === 'string' ? JSON.parse(data.contents) : data.contents;
+            }
 
-        // Log all names so we can confirm exact spelling
-        console.log('ALL RIDES:', entries.map(r => r.name).join(', '));
+            let allRides = [];
+            if (Array.isArray(data.lands)) {
+                data.lands.forEach(l => { if (Array.isArray(l.rides)) allRides = allRides.concat(l.rides); });
+            }
+            if (Array.isArray(data.rides)) allRides = allRides.concat(data.rides);
+            if (!allRides.length) continue;
 
-        const coasters = entries
-            .filter(r => r && r.name && VALID_COASTERS.has(r.name))
-            .map(r => {
-                const wait = r.queue?.STANDBY?.waitTime ?? 0;
-                const open = r.status === 'OPERATING';
-                return { name: r.name, is_open: open, wait_time: wait };
-            })
-            .sort((a, b) => a.name.localeCompare(b.name));
-
-        console.log('MATCHED COASTERS:', coasters.map(r => r.name).join(', '));
-
-        // If nothing matched the allowlist, show everything with a wait time > 0
-        // so the ticker is never empty even if names differ
-        if (!coasters.length) {
-            const fallback = entries
-                .filter(r => r && r.name && r.status === 'OPERATING' && (r.queue?.STANDBY?.waitTime ?? 0) >= 0)
+            const coasters = allRides
+                .filter(r => r && r.name && VALID_COASTERS.has(r.name))
                 .map(r => ({
                     name: r.name,
-                    is_open: true,
-                    wait_time: r.queue?.STANDBY?.waitTime ?? 0
+                    is_open: r.is_open === true || r.is_open === 1 || r.is_open === 'true',
+                    wait_time: typeof r.wait_time === 'number' ? r.wait_time : 0
                 }))
                 .sort((a, b) => a.name.localeCompare(b.name));
-            return fallback.length ? fallback : null;
+
+            if (coasters.length) return coasters;
+
+        } catch {
+            clearTimeout(tid);
         }
-
-        return coasters;
-
-    } catch {
-        clearTimeout(tid);
-        return null;
     }
+    return null;
 }
 
 // ─── RENDER ───────────────────────────────────────────────────────────────────

@@ -198,8 +198,7 @@
 </div>
 
 <script>
-
-  // ─── CONFIG ──────────────────────────────────────────────────────────────────
+// ─── CONFIG ──────────────────────────────────────────────────────────────────
 
 // ThemeParks.wiki Cedar Point entity ID — no proxy needed, API has open CORS
 const DATA_URL      = 'https://api.themeparks.wiki/v1/entity/c8299e1a-0098-4677-8ead-dd0da204f8dc/live';
@@ -211,7 +210,6 @@ const OPEN_H        = 10;
 const CLOSE_H_WD    = 20;
 const CLOSE_H_WE    = 22;
 
-// Coaster names as they appear in the ThemeParks.wiki API
 const VALID_COASTERS = new Set([
     "Blue Streak", "Cedar Creek Mine Ride", "Corkscrew", "GateKeeper",
     "Gemini", "Iron Dragon", "Magnum XL-200", "Maverick",
@@ -267,6 +265,9 @@ async function fetchCoasterData() {
         const entries = data.liveData;
         if (!Array.isArray(entries) || !entries.length) return null;
 
+        // Log all names so we can confirm exact spelling
+        console.log('ALL RIDES:', entries.map(r => r.name).join(', '));
+
         const coasters = entries
             .filter(r => r && r.name && VALID_COASTERS.has(r.name))
             .map(r => {
@@ -276,7 +277,23 @@ async function fetchCoasterData() {
             })
             .sort((a, b) => a.name.localeCompare(b.name));
 
-        return coasters.length ? coasters : null;
+        console.log('MATCHED COASTERS:', coasters.map(r => r.name).join(', '));
+
+        // If nothing matched the allowlist, show everything with a wait time > 0
+        // so the ticker is never empty even if names differ
+        if (!coasters.length) {
+            const fallback = entries
+                .filter(r => r && r.name && r.status === 'OPERATING' && (r.queue?.STANDBY?.waitTime ?? 0) >= 0)
+                .map(r => ({
+                    name: r.name,
+                    is_open: true,
+                    wait_time: r.queue?.STANDBY?.waitTime ?? 0
+                }))
+                .sort((a, b) => a.name.localeCompare(b.name));
+            return fallback.length ? fallback : null;
+        }
+
+        return coasters;
 
     } catch {
         clearTimeout(tid);
